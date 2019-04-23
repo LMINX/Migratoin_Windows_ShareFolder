@@ -89,6 +89,7 @@ if ($s -ne $null)
             last_file=$ss.name
             total_capacity_in_GB=$totalbyGB
             sharepath=$global:sharename
+            LocalPath=$global:rootpath
           }
         $summary
         #write "last file is $ss.name,total capacity is $totalbyGB GB,sharepath is $global:rootpath,share name is $global:sharename"
@@ -100,6 +101,7 @@ if ($s -ne $null)
             last_file=$ss.name
             total_capacity_in_GB=$totalbyGB
             sharepath=$global:sharename
+             LocalPath=$global:rootpath
           }
         $summary
         #write "last file is $ss.name,total capacity is $totalbyGB GB,sharepath is $global:rootpath,share name is $global:sharename"
@@ -120,6 +122,7 @@ else
             last_file="no last file"
             total_capacity_in_GB=$totalbyGB
             sharepath=$global:sharename
+             LocalPath=$global:rootpath
           }
         $summary
     #write "no last file ,total capacity is $totalbyGB GB,sharepath is $global:rootpath,share name is $global:sharename"  
