@@ -1,0 +1,29 @@
+-------------------------------------------------------------------------------
+   ROBOCOPY     ::     Robust File Copy for Windows                              
+-------------------------------------------------------------------------------
+
+  Started : Tuesday, April 30, 2019 10:07:46 AM
+   Source : \\nke-win-nas-p23\TestShareNoAdminAccess\
+     Dest : \\10.73.109.70\robotest\TestShareNoAdminAccess\
+
+    Files : *.*
+	    
+  Options : *.* /TEE /S /E /COPYALL /PURGE /MIR /ZB /MT:16 /R:0 /W:0 
+
+------------------------------------------------------------------------------
+
+	    New File  		       0	\\nke-win-nas-p23\TestShareNoAdminAccess\inhereatedFile.txt  0%  100%  
+	    New File  		       0	\\nke-win-nas-p23\TestShareNoAdminAccess\NoinhereatedFile-onlyForGliu10.txt100%  
+	    New File  		       0	\\nke-win-nas-p23\TestShareNoAdminAccess\SubfolderInheratedPermission\inhereatedFile.txt100%  
+	    New File  		       0	\\nke-win-nas-p23\TestShareNoAdminAccess\SubfolderInheratedPermission\NoinhereatedFile-onlyForGliu10.txt100%  
+	    New File  		       0	\\nke-win-nas-p23\TestShareNoAdminAccess\SubfolderWithoutInheratedPermission\inhereatedFile.txt100%  
+	    New File  		       0	\\nke-win-nas-p23\TestShareNoAdminAccess\SubfolderWithoutInheratedPermission\NoinhereatedFile-onlyForGliu10.txt100%  
+
+------------------------------------------------------------------------------
+
+               Total    Copied   Skipped  Mismatch    FAILED    Extras
+    Dirs :         3         3         3         0         0         0
+   Files :         6         6         0         0         0         0
+   Bytes :         0         0         0         0         0         0
+   Times :   0:00:00   0:00:00                       0:00:00   0:00:00
+   Ended : Tuesday, April 30, 2019 10:07:47 AM
