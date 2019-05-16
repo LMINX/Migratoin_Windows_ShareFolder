@@ -1,16 +1,21 @@
 ﻿<#
 Get the top N level of the floder ,including the file and directories.
-
 copy the file by level , level 1 then  level 2 ...
+2019/05/16 add the function 
+1.wirte down the log to Driver from job (in Memeory) 
+2.Anylyze the Robocopy log to show failed copied file
+
+Optmize the performacne for Find-FailedFile.
+Error haddlding, for null in get-childitem on folder level and ..
 #>
 $global:ShareFlodercollection=@()
-$global:MaxLevel=4
+$global:MaxLevel=2
 $global:alljobs=@()
-$path="H:\00_Tim Mon" 
+$path="H:\" 
 $root="H:"
-$base="\\rnlq03404hv001\RobocopyMultiThread"
+$base="\\10.73.109.70\robotest"
 $basefolder=$base+$path.Substring($root.Length)
-$saaccount="nike\sa.gliu10"
+$saaccount="nike\sa.tni"
 $secpasswd = ConvertTo-SecureString "********" -AsPlainText -Force
 $mycreds = New-Object System.Management.Automation.PSCredential ($saaccount, $secpasswd)
 function Get-SharebyFolderByLevel
@@ -83,7 +88,7 @@ function  Covert-RobocopyLogObjFromJob{
         $RoboCopyJob
     )
     #----robocopy log analyze
-$SplitLines="---"
+$SplitLines=$SplitLines="^(-)+$"
 $int=0
 $SplitLinesLineNumber=@()
 $RoboCopyJob.Joboutput.length
@@ -120,37 +125,115 @@ function Analyze-RobocoyLog {
         [Parameter(Mandatory=$true,position=0)]
         $robocopyinstance
     )
-    $int=0
+
+    $start=0
     $AnylyzeRobocopyObj=@()
-    foreach ($line in $robocopyinstance.RobocopySummary)
+    $robocopycommandLength=$robocopyinstance.robocopycommand.count
+    foreach ($robocopycommandline in $robocopyinstance.robocopycommand)
     {
-        if($int -eq 0 )
+    if(($start -in (0,4,6) ) -or ($start -eq $robocopycommandLength-1))
         {
             #this is the title for summary
         }
-        else 
-        {   
-            $SubTotal=$line.split(":")
-            $SubTotalCatagory=$subtotal[0]
-            $SubTotalCatagoryDetail=$subtotal[1]
-            #replace multe white space to one for further spilt string by space
-            $SubTotalCatagoryDetail=$SubTotalCatagoryDetail -replace ('\s+', ' ')
-            $SubTotalCatagoryDetailByColumn = $SubTotalCatagoryDetail.Split(' ')
-            $SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetailByColumn[0]
-            $SubTotalCatagoryDetailCopied=$SubTotalCatagoryDetailByColumn[1]
-            $SubTotalCatagoryDetailSkiped=$SubTotalCatagoryDetailByColumn[2]
-            $SubTotalCatagoryDetailMisMatched=$SubTotalCatagoryDetailByColumn[3]
-            $SubTotalCatagoryDetailFailed=$SubTotalCatagoryDetailByColumn[4]
-            $SubTotalCatagoryDetailExtras=$SubTotalCatagoryDetailByColumn[5]
-    
-            $RoboCopyResultByCategory=[PSCustomObject]@{
+    else
+        {
+        $FirstColonIndex=$robocopycommandline.indexof(":")
+        $SubTotalCatagory=($robocopycommandline.substring(0,$FirstColonIndex-1)).trim()
+        $SubTotalCatagoryDetail=($robocopycommandline.substring($FirstColonIndex+1)).trimstart()
+            if( $SubTotalCatagory -like "Started")
+            {
+             $SubTotalCatagory=$SubTotalCatagory
+            $SubTotalCatagoryDetail=[datetime]$SubTotalCatagoryDetail
+            }
+
+        $RoboCopyCommandByCategory=[PSCustomObject]@{
                 SubTotalCatagory = $SubTotalCatagory
-                SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetailByColumn[0]
-                SubTotalCatagoryDetailCopied=$SubTotalCatagoryDetailByColumn[1]
-                SubTotalCatagoryDetailSkiped=$SubTotalCatagoryDetailByColumn[2]
-                SubTotalCatagoryDetailMisMatched=$SubTotalCatagoryDetailByColumn[3]
-                SubTotalCatagoryDetailFailed=$SubTotalCatagoryDetailByColumn[4]
-                SubTotalCatagoryDetailExtras=$SubTotalCatagoryDetailByColumn[5]
+                SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetail
+                }
+        $AnylyzeRobocopyObj+= $RoboCopyCommandByCategory
+        }
+
+    $start++
+    }
+    
+
+    $int=0
+
+    foreach ($line in $robocopyinstance.RobocopySummary)
+    {
+        if(($int -eq 1) -or ($line -match '^\s*$'))
+        {
+            #this is the title for summary and first line is empty
+        }
+        else
+        {   
+            $FirstColonIndex=$line.indexof(":")
+            #SubTotal=$line.substring(0,$FirstColonIndex-1)
+            $SubTotalCatagory=($line.substring(0,$FirstColonIndex-1)).trim()
+            
+            if( $SubTotalCatagory -like "Ended")
+            {
+                $SubTotalCatagoryDetail=($line.substring($FirstColonIndex+1)).trimstart()
+                $RoboCopyResultByCategory=[PSCustomObject]@{
+                    SubTotalCatagory = $SubTotalCatagory
+                    SubTotalCatagoryDetailTotal=[datetime]$SubTotalCatagoryDetail
+                }
+            }
+            elseif ( $SubTotalCatagory -like "Speed")
+            {
+            #skip Speed summary line,such as
+            #Speed :             2396302 Bytes/sec.
+            #Speed :             137.117 MegaBytes/min.
+            continue
+            }
+            elseif( $SubTotalCatagory -like "Times")
+            {
+                $SubTotalCatagoryDetail=($line.substring($FirstColonIndex+1)).trimstart()
+                $SubTotalCatagoryDetail=$SubTotalCatagoryDetail -replace ('\s+', ' ')
+                $SubTotalCatagoryDetailByColumn = $SubTotalCatagoryDetail.Split(' ')
+                $SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetailByColumn[0]
+                $SubTotalCatagoryDetailCopied=$SubTotalCatagoryDetailByColumn[1]
+                $SubTotalCatagoryDetailFailed=$SubTotalCatagoryDetailByColumn[2]
+                $SubTotalCatagoryDetailExtras=$SubTotalCatagoryDetailByColumn[3]
+                $RoboCopyResultByCategory=[PSCustomObject]@{
+                    SubTotalCatagory = $SubTotalCatagory
+                    SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetailTotal
+                    SubTotalCatagoryDetailCopied=$SubTotalCatagoryDetailCopied
+                    SubTotalCatagoryDetailFailed=$SubTotalCatagoryDetailFailed
+                    SubTotalCatagoryDetailExtras=$SubTotalCatagoryDetailExtras
+                }
+            }
+            else{
+                $SubTotalCatagoryDetail=$line.split(":")[1].trimstart()
+                #replace the space infront of the unit, sucha as 3.91 t 12.5 m
+                if($SubTotalCatagoryDetail -match '\d\s\w')
+                {
+                    $matches=([regex]'\d\s\w').Matches($SubTotalCatagoryDetail)
+                    foreach ($m in $matches)
+                    {
+                    $m_RemoveSpaceInMiddle=$m.value -replace (' ','')
+                    $SubTotalCatagoryDetail=$SubTotalCatagoryDetail -replace ($m.value,$m_RemoveSpaceInMiddle)
+                    }
+                }
+                #replace multe white space to one for further spilt string by space
+                $SubTotalCatagoryDetail=$SubTotalCatagoryDetail -replace ('\s+', ' ')
+                $SubTotalCatagoryDetailByColumn = $SubTotalCatagoryDetail.Split(' ')
+                $SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetailByColumn[0]
+                $SubTotalCatagoryDetailCopied=$SubTotalCatagoryDetailByColumn[1]
+                $SubTotalCatagoryDetailSkiped=$SubTotalCatagoryDetailByColumn[2]
+                $SubTotalCatagoryDetailMisMatched=$SubTotalCatagoryDetailByColumn[3]
+                $SubTotalCatagoryDetailFailed=$SubTotalCatagoryDetailByColumn[4]
+                $SubTotalCatagoryDetailExtras=$SubTotalCatagoryDetailByColumn[5]
+    
+                $RoboCopyResultByCategory=[PSCustomObject]@{
+                    SubTotalCatagory = $SubTotalCatagory
+                    SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetailTotal
+                    SubTotalCatagoryDetailCopied=$SubTotalCatagoryDetailCopied
+                    SubTotalCatagoryDetailSkiped=$SubTotalCatagoryDetailSkiped
+                    SubTotalCatagoryDetailMisMatched=$SubTotalCatagoryDetailMisMatched
+                    SubTotalCatagoryDetailFailed=$SubTotalCatagoryDetailFailed
+                    SubTotalCatagoryDetailExtras=$SubTotalCatagoryDetailExtras
+                }
             }
             $AnylyzeRobocopyObj+= $RoboCopyResultByCategory
         }
@@ -158,16 +241,92 @@ function Analyze-RobocoyLog {
     }
     $AnylyzeRobocopyObj
 }
+function Find-FailedFile {
+    param (
+        [Parameter(Mandatory=$true,position=0)]
+        $robocopyinstance
+    )
+   $RobocopyDetail=$robocopyinstance.RobocopyDetail
+   #$matches=([regex]'ERROR: ').Matches($robocopyinstance.RobocopyDetail)
+   $FailFiles=@()
+   $i=0
+   foreach ($line in $RobocopyDetail)
+   {
+       if ($line -match 'ERROR: ')
+       {
+            $endline=$i
+            if($i -eq 0)
+            {$j=$i
+            }
+            else
+            {$j=$i-1
+            }
+                for($j;$j -ge ($i-10);$j--)
+                {
+                    if($RobocopyDetail[$j] -match 'New File')
+                        {
+                        $StartLine=$j
+                        break
+                        }
+                    elseif(($StartLine -eq $null) -and ($j -ge ($i-10)))
+                    {
+                    $FailFileEntryLine=$null
+                    }
+                    else
+                    {
+                    #keep search the netxt
+                    }
+                }
+                
+                if ($FailFileEntryLine -ne $null)
+                {
+                $FailFileEntryLine=$RobocopyDetail[$StartLine..$endline]
+                    foreach ($line in $FailFileEntryLine)
+                    {
+                        #2019/05/14 21:58:42 ERROR 31 (0x0000001F) 
+                        if ($line -match 'ERROR (\d)+')
+                        {
+            
+                        $FilePathmatches=([regex]'[a-zA-Z]:\\(((?![<>:"/\\|?*]).)+((?<![ .])\\)?)*.*').matches($line)
+                        $FilePath= $FilePathmatches[0].value
+                        #05/15 keep find error reason
+                            $FailFileEntry=[PSCustomObject]@{
+                            FilePath=$filepath
+                            }
+                        }
+                    }
+                  }
+                  else
+                  {
+                     $FailFileEntry=[PSCustomObject]@{
+                     FilePath="unable to find error entry in 10 lines,please manually check the log"
+                     }
+                  }
+            $FailFiles+=$FailFileEntry
+         }
+         elseif (($FailFiles -eq $null) -and ($i -eq $RobocopyDetail.count-1))
+         {
+             $FailFileEntry=[PSCustomObject]@{
+             FilePath="unable to find error,please manually check the log"
+             }
+         $FailFiles+=$FailFileEntry
+         }  
+         else
+         {
+         #keep search for the next line
+         }
+   $i++
+   } 
+   return $FailFiles
+}
 
-
-
-write-host -ForegroundColor "---Get-SharebyFolderByLevel---"
-Get-SharebyFolderByLevel -path "H:\00_Tim Mon" 
+write-host -ForegroundColor Cyan "---Get-SharebyFolderByLevel---"
+Get-SharebyFolderByLevel -path "H:\" 
 #$global:ShareFlodercollection.count
 #$global:ShareFlodercollection|select fullname,folderlevel
 #$basefolder
 
-write-host -ForegroundColor "---CopyFolderByLevel---"
+write-host -ForegroundColor Cyan "---CopyFolderByLevel---"
 #robocopy $path $basefolder   /E /S  /create /mir
 $starttime=Get-Date
 for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
@@ -235,12 +394,12 @@ for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
 }
 
 
-write-host -ForegroundColor "---Monitor the Job once all Robocopy is not running--"
+write-host -ForegroundColor Cyan "---Monitor the Job once all Robocopy is not running--"
 Monitor-Jobs -alljobs $global:alljobs
 
 $endtime=Get-Date
 "total copytime is $(($endtime-$starttime).totalseconds) seconds"
-write-host -ForegroundColor "---receive all Robocopy job--"
+write-host -ForegroundColor Cyan "---receive all Robocopy job--"
 $results=@()
 foreach ($j in $global:alljobs)
 {
@@ -252,31 +411,109 @@ $results+= $result
 }
 
 
-write-host -ForegroundColor "---Anylyze Each Job output---"
+
+
+write-host -ForegroundColor Cyan "---Anylyze Each Job output---"
 #Anylyze Each Job output
-$jobstatus=get-content "C:\work\script\Migrate-ShareFolder\robocopylogSample.txt"
-$job1=[PSCustomObject]@{
-    Name = "job1"
-    Joboutput=$jobstatus
+#$jobstatus=get-content "C:\work\script\Migrate-ShareFolder\robocopylogSample.txt"
+#$job1=[PSCustomObject]@{
+#    Name = "job1"
+#    Joboutput=$jobstatus
+#}
+#$results+=$job1
+$LogFolderName=$starttime.tostring("yyyy_MM_dd_HH_mm_ss")
+$LogFolderPath="c:\temp\P23\"+$LogFolderName+"\"
+if (!(Test-Path -Path $LogFolderPath))
+{
+New-Item -Path "c:\temp\P23\" -Name $LogFolderName -ItemType "directory"
 }
-$results+=$job1
+$Job_SourceFiles_Mappings=@()
+$AllFailedFiles=@()
 foreach ($RoboCopyJob in $results)
 {
-    $RobojobInstance=Covert-RobocopyLogObjFromJob -RoboCopyJob $RoboCopyJob
-    $AnylyzeRobocopyObj=Analyze-RobocoyLog -robocopyinstance $RobojobInstance
-    if(  $AnylyzeRobocopyObj[1].SubTotalCatagoryDetailFailed -ne 0 )
+    $RoboCopyInstance=Covert-RobocopyLogObjFromJob -RoboCopyJob $RoboCopyJob
+    #write down the log in to file before anylyze
+    #wrte down the relation betwen job and source file(s)
+
+
+    $AnylyzeRobocopyObj=Analyze-RobocoyLog -robocopyinstance $RoboCopyInstance
+
+    
+    if(  $AnylyzeRobocopyObj[6].SubTotalCatagoryDetailFailed -ne 0 )
     {
-        write-host -ForegroundColor red "robocopy ： Failed Detail is”
-        $RobojobInstance.RobocopyCommand
-        $RobojobInstance.RobocopySummary
-        $RobojobInstance.RobocopyDetail
+        $AnylyzeRobocopySummay=[PSCustomObject]@{
+        SourceFolder=$AnylyzeRobocopyObj[1].SubTotalCatagoryDetailTotal
+        CopyStartTime=$AnylyzeRobocopyObj[0].SubTotalCatagoryDetailTotal
+        SourceFile=$AnylyzeRobocopyObj[3].SubTotalCatagoryDetailTotal
+        CopyEndTime=$AnylyzeRobocopyObj[9].SubTotalCatagoryDetailTotal
+        CopyStatus="Failed"
+        jobid=$robocopyjob.jobid
+        }
+        write-host -ForegroundColor red "robocopy ： Failed Detail is ”
+        $AnylyzeRobocopySummay|Ft
+
+        #find failed filse fuction,need testing. 
+        $JobFailedFiles=Find-FailedFile -robocopyinstance $RoboCopyInstance 
+         write-host -ForegroundColor red "robocopy ： Failed Files is ”
+        $JobFailedFiles
+        $FailefileSummary=[pscustomobject]@{
+        AnylyzeRobocopySummay=$AnylyzeRobocopySummay
+        JobFailedFiles=$JobFailedFiles
+        }
+        $AllFailedFiles+=$FailefileSummary
 
     }
-    else {
+    else 
+    {
+        $AnylyzeRobocopySummay=[PSCustomObject]@{
+        SourceFolder=$AnylyzeRobocopyObj[1].SubTotalCatagoryDetailTotal
+        CopyStartTime=$AnylyzeRobocopyObj[0].SubTotalCatagoryDetailTotal
+        SourceFile=$AnylyzeRobocopyObj[3].SubTotalCatagoryDetailTotal
+        CopyEndTime=$AnylyzeRobocopyObj[9].SubTotalCatagoryDetailTotal
+        CopyStatus="OK"
+        jobid=$robocopyjob.jobid
+        }
         write-host -ForegroundColor Green "robocopy :  Successed”
-        $RobojobInstance.RobocopyCommand
+        $AnylyzeRobocopySummay|ft
     }
+    
+    if($AnylyzeRobocopySummay.SourceFile -eq "*.*")
+    {
+    $path="$LogFolderPath"+"job_"+($robocopyjob.jobid)+".txt"
+        $Job_SourceFiles_Mapping=[pscustomobject]@{
+        jobid=$robocopyjob.jobid
+        SourceFolder=($AnylyzeRobocopySummay.SourceFolder)
+        SourceFiles="allFiles"
+        }
+    
+    }
+    else
+    {
+    $path="$LogFolderPath"+"job_"+($robocopyjob.jobid)+".txt"
+        $Job_SourceFiles_Mapping=[pscustomobject]@{
+        jobid=$robocopyjob.jobid
+        SourceFolder=($AnylyzeRobocopySummay.SourceFolder)
+        SourceFiles=$AnylyzeRobocopySummay.SourceFile
+        }
+
+    }
+    #write the log to logfolder
+
+    $robocopyjob.Joboutput >$path
+    $Job_SourceFiles_Mappings+=$Job_SourceFiles_Mapping
+    
 }
 
+$Job_SourceFiles_Mappings|export-csv -Path ($LogFolderPath+"Job_SourceFiles_Mappings.csv")
 $endtime=Get-Date
 "total runtime(including Anylyze log) is $(($endtime-$starttime).totalseconds) seconds"
+
+$TotalCountofFiledFiles=0
+foreach ($obj in $AllFailedFiles)
+{
+$JobFailedFilesCount=$obj.jobfailedFiles.filepath.count
+$TotalCountofFiledFiles+=$JobFailedFilesCount
+}
+"All Failed Files count is $TotalCountofFiledFiles. Details  are  " 
+$AllFailedFilesDetail=$AllFailedFiles|select -ExpandProperty  JobFailedFiles
+$AllFailedFilesDetail
