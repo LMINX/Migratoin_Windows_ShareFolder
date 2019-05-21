@@ -5,16 +5,28 @@ copy the file by level , level 1 then  level 2 ...
 1.wirte down the log to Driver from job (in Memeory) 
 2.Anylyze the Robocopy log to show failed copied file
 
+
+
+2019/05/21  issue:Server BSOD 
+limit the total current session for robocopy instanse when CPU/Memory/DIsk/Network useage is high
+1)do not keep all the log to memory , remove -k parameter for receive job 
+2)after copy finish , read the log from the log file instead of reading the global:result variable.
+Bug: will failed by geting the folder as not permission ,try to catch this and save it to both windows log and log file
+3)limit the robocpopy concurrence to 2 instance to avoid system resource busy,test will be on 5/22，can update by $global:ConcurrenceJobs
+
 Optmize the performacne for Find-FailedFile.
 Error haddlding, for null in get-childitem on folder level and ..
 #>
 $global:ShareFlodercollection=@()
 $global:MaxLevel=2
+$global:EventLogSource="P23Migration"
 $global:alljobs=@()
+$global:GetChildItemErrorCollection=@()
+$global:ConcurrenceJobs=2
 $path="H:\" 
 $root="H:"
-$base="\\10.73.109.70\robotest"
-$basefolder=$base+$path.Substring($root.Length)
+$global:base="\\10.73.109.70\robotest"
+$global:basefolder=$global:base+$path.Substring($root.Length)
 $saaccount="nike\sa.tni"
 $secpasswd = ConvertTo-SecureString "********" -AsPlainText -Force
 $mycreds = New-Object System.Management.Automation.PSCredential ($saaccount, $secpasswd)
@@ -28,31 +40,63 @@ $currentlevel
 )
     if($currentlevel -eq $null)
     {$CurrentLevel=0}
-    else {$CurrentLevel=$currentlevel}
+    else 
+    {$CurrentLevel=$currentlevel}
 
     if ($CurrentLevel -lt $global:MaxLevel -and $CurrentLevel -ge 0)
     {
-
-    $currentfolder=Get-ChildItem $path  
-    $CurrentLevel++
-        foreach($obj in $currentfolder)
-        {
-        $obj|Add-Member -NotePropertyName "FolderLevel" -NotePropertyValue $CurrentLevel
-        $global:ShareFlodercollection+=$obj
-
-            if ($obj.gettype() -eq [System.IO.DirectoryInfo])
+        try{
+            "path is $path"
+            $currentfolder=Get-ChildItem $path -ErrorAction Stop -ErrorVariable GetChildItemError
+            $CurrentLevel++
+                foreach($obj in $currentfolder)
                 {
-                
-                $obj.FullName
-                "current lever is {0} " -f $currentlevel
-                
-                Get-SharebyFolderByLevel -path ($obj.fullname) -currentlevel $CurrentLevel
-                
+                "obj is {0}" -f  ($obj.fullname)
+                $obj|Add-Member -NotePropertyName "FolderLevel" -NotePropertyValue $CurrentLevel
+                $obj|Add-Member -NotePropertyName "Extendable" -NotePropertyValue $True
+                $global:ShareFlodercollection+=$obj
+        
+                    if ($obj.gettype() -eq [System.IO.DirectoryInfo])
+                        {
+                        
+                        "subfolder is {0}" -f $obj.FullName
+                        "current lever is {0} " -f $currentlevel
+                        
+                        Get-SharebyFolderByLevel -path ($obj.fullname) -currentlevel $CurrentLevel
+                        
+                        }
+        
                 }
 
         }
-
-        
+        Catch
+        {
+            #Get-ChildItem will failed due to permission, then we can not extend the subfolders. Copy this kind of floder without Level 1 parameter
+            "catch error $path"
+            $global:GetChildItemErrorCollection+=$GetChildItemError 
+            $CurrentLevel=$global:MaxLevel 
+            $currentfolder=Get-Item $path
+            $FindFolderinGlobalCollction=$global:ShareFlodercollection|where-object {$_.fullname -eq $currentfolder.FullName }
+            "catch folder is "
+            $FindFolderinGlobalCollction|fl -Property *
+            if ($FindFolderinGlobalCollction -ne $null){
+                $FindFolderinGlobalCollction.folderlevel=$CurrentLevel
+                $FindFolderinGlobalCollction.Extendable=$False
+            }
+            else {
+                $currentfolder|Add-Member -NotePropertyName "FolderLevel" -NotePropertyValue $CurrentLevel
+                $currentfolder|Add-Member -NotePropertyName "Extendable" -NotePropertyValue $False
+                $global:ShareFlodercollection+=$currentfolder
+                
+                if ([System.Diagnostics.EventLog]::SourceExists($global:EventLogSource)){
+                    #no need to create the source
+                }
+                else {
+                    New-EventLog -LogName Application -Source $global:EventLogSource
+                }
+                Write-EventLog -LogName "Application" -Source $global:EventLogSource -EventID 1 -EntryType Error -Message "unable to get-childitem for $path." 
+            }    
+        }       
     }
 
 }
@@ -82,6 +126,86 @@ $jobnotcompleted=$true
 
 }
 
+function Get-Runningjob
+{
+Param (
+[Parameter(Mandatory=$true,position=0)]
+$alljobs
+)
+$RunningjobCollection=@()
+foreach( $job in $global:alljobs){
+    $job=get-job -id $job.id
+    if ($job.state -eq 'Running')
+    {
+        $RunningjobCollection+=$job
+    }
+    else {
+        #do nothing
+    }
+                  
+}
+return $RunningjobCollection
+}
+
+function copy-share
+{
+    param (
+        [Parameter(Mandatory=$true,position=0)]
+        $share
+    )
+    if ($share.gettype() -eq [System.IO.DirectoryInfo])
+    {
+    #ex: source is H:\00_Tim Mon\NKE-WIN-GTW-P17_5240P4017\System Monitor Log.blg
+    $pathrootlength=$share.FullName.IndexOf(":")+1
+    $suffixslashlength=("\").length
+    $source=$share.FullName
+    $dest=$global:base+$share.FullName.Substring($pathrootlength,$share.FullName.Length-$pathrootlength)
+    "source is {0} and dest is {1}" -f ($source,$dest)
+    $level="/lev:2"
+        if ($lev -lt $global:MaxLevel)
+        {
+        "coyp floder robocopy {0} {1} /R:1 /W:1 /MIR  /ZB {2}" -f ($source,$dest,$level)
+        #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  $args[2]} -ArgumentList ($source,$dest,$level)  # -AsJob 
+        $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  $args[2]} -ArgumentList ($source,$dest,$level)
+        $global:alljobs+=$job
+        #as job will fail ,due to AmbiguousParameterSet
+        # contorl the total count of robocopy process 
+
+        }
+        elseif ($lev -eq $global:MaxLevel)
+        {
+        "coyp floder robocopy {0} {1} /R:1 /W:1 /MIR  /ZB" -f ($source,$dest)
+        #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  /S /E} -ArgumentList ($source,$dest,$level)  # -AsJob 
+        $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1 /MT:32 /ZB /CopyALL  /S /E} -ArgumentList ($source,$dest,$level)
+        $global:alljobs+=$job
+        #as job will fail ,due to AmbiguousParameterSet
+        # contorl the total count of robocopy process
+        } 
+        else
+        {
+        #do nothing
+        }
+    }
+    elseif (($share.gettype() -eq [System.IO.FileInfo] ) -and ($Lev -eq 1 ))
+    {
+    #ex: source is H:\00_Tim Mon\NKE-WIN-GTW-P17_5240P4017\System Monitor Log.blg
+    $pathrootlength=$share.FullName.IndexOf(":")+1
+    $suffixslashlength=("\").length
+    $source=$share.FullName.Substring(0,$share.FullName.Length-$share.Name.Length-$suffixslashlength)
+    $dest=$global:base+$share.FullName.Substring(2,$share.FullName.Length-$share.Name.Length-$pathrootlength-$suffixslashlength)
+    $level="/lev:1"
+    $filename=$share.Name
+    "coyp file robocopy {0} {1} {2}  /R:1 /W:1 /MIR  /ZB  {3}" -f  ($source,$dest,$filename,$level)
+    #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1   /ZB   $args[3]  } -ArgumentList ($source,$dest,$filename,$level)   #-asjob 
+    $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1 /MT:32  /ZB /CopyALL   $args[3]  } -ArgumentList ($source,$dest,$filename,$level) 
+    $global:alljobs+=$job
+    }
+    else
+    {
+    #do nothing
+    }
+
+}
 function  Covert-RobocopyLogObjFromJob{
     param (
         [Parameter(Mandatory=$true,position=0)]
@@ -321,7 +445,7 @@ function Find-FailedFile {
 }
 
 write-host -ForegroundColor Cyan "---Get-SharebyFolderByLevel---"
-Get-SharebyFolderByLevel -path "H:\" 
+Get-SharebyFolderByLevel -path $path
 #$global:ShareFlodercollection.count
 #$global:ShareFlodercollection|select fullname,folderlevel
 #$basefolder
@@ -334,60 +458,28 @@ for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
 
     foreach ($share in ($global:ShareFlodercollection|where {$_.folderlevel -eq $lev}))
     {
+        #limit the concurrence of the robocopy job
+        $Runningjob=Get-Runningjob -alljobs $global:alljobs
+        $Runningjobcount=$Runningjob.count
+        if($Runningjobcount -le $global:ConcurrenceJobs)
+        {
+            copy-share -share $share
 
-    if ($share.gettype() -eq [System.IO.DirectoryInfo])
-    {
-    #ex: source is H:\00_Tim Mon\NKE-WIN-GTW-P17_5240P4017\System Monitor Log.blg
-    $pathrootlength=$share.FullName.IndexOf(":")+1
-    $suffixslashlength=("\").length
-    $source=$share.FullName
-    $dest=$base+$share.FullName.Substring($pathrootlength,$share.FullName.Length-$pathrootlength)
-    "source is {0} and dest is {1}" -f ($source,$dest)
-    $level="/lev:2"
-    if ($lev -lt $global:MaxLevel)
-    {
-    "coyp floder robocopy {0} {1} /R:1 /W:1 /MIR  /ZB {2}" -f ($source,$dest,$level)
-    #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  $args[2]} -ArgumentList ($source,$dest,$level)  # -AsJob 
-    $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  $args[2]} -ArgumentList ($source,$dest,$level)
-    $global:alljobs+=$job
-    #as job will fail ,due to AmbiguousParameterSet
-    # contorl the total count of robocopy process 
+        }
+        else {
+            while($True){
+                $Runningjob=Get-Runningjob -alljobs $global:alljobs
+                $Runningjobcount=$Runningjob.count
+                if($Runningjobcount -lt $global:ConcurrenceJobs)
+                {
+                    break
+                }
+                Start-Sleep 90
+            }
+            copy-share -share $share
+            
+        }
 
-    }
-    elseif ($lev -eq $global:MaxLevel)
-    {
-    "coyp floder robocopy {0} {1} /R:1 /W:1 /MIR  /ZB" -f ($source,$dest)
-    #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  /S /E} -ArgumentList ($source,$dest,$level)  # -AsJob 
-    $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1 /MT:32 /ZB /CopyALL  /S /E} -ArgumentList ($source,$dest,$level)
-    $global:alljobs+=$job
-    #as job will fail ,due to AmbiguousParameterSet
-    # contorl the total count of robocopy process
-    } 
-    else
-    {
-    #do nothing
-    }
-
-
-    }
-    elseif (($share.gettype() -eq [System.IO.FileInfo] ) -and ($Lev -eq 1 ))
-    {
-    #ex: source is H:\00_Tim Mon\NKE-WIN-GTW-P17_5240P4017\System Monitor Log.blg
-    $pathrootlength=$share.FullName.IndexOf(":")+1
-    $suffixslashlength=("\").length
-    $source=$share.FullName.Substring(0,$share.FullName.Length-$share.Name.Length-$suffixslashlength)
-    $dest=$base+$share.FullName.Substring(2,$share.FullName.Length-$share.Name.Length-$pathrootlength-$suffixslashlength)
-    $level="/lev:1"
-    $filename=$share.Name
-    "coyp file robocopy {0} {1} {2}  /R:1 /W:1 /MIR  /ZB  {3}" -f  ($source,$dest,$filename,$level)
-    #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1   /ZB   $args[3]  } -ArgumentList ($source,$dest,$filename,$level)   #-asjob 
-    $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1 /MT:32  /ZB /CopyALL   $args[3]  } -ArgumentList ($source,$dest,$filename,$level) 
-    $global:alljobs+=$job
-    }
-    else
-    {
-    
-    }
     }
 
 
@@ -400,12 +492,13 @@ Monitor-Jobs -alljobs $global:alljobs
 $endtime=Get-Date
 "total copytime is $(($endtime-$starttime).totalseconds) seconds"
 write-host -ForegroundColor Cyan "---receive all Robocopy job--"
-$results=@()
+#$results=@()
 foreach ($j in $global:alljobs)
 {
 $result=[PSCustomObject]@{
 Jobid = $j.Id
-Joboutput=receive-job -Job $j -keep
+#Joboutput=receive-job -Job $j -keep
+Joboutput=receive-job -Job $j
         }
 $results+= $result
 }
@@ -427,6 +520,7 @@ if (!(Test-Path -Path $LogFolderPath))
 {
 New-Item -Path "c:\temp\P23\" -Name $LogFolderName -ItemType "directory"
 }
+
 $Job_SourceFiles_Mappings=@()
 $AllFailedFiles=@()
 foreach ($RoboCopyJob in $results)
@@ -516,4 +610,17 @@ $TotalCountofFiledFiles+=$JobFailedFilesCount
 }
 "All Failed Files count is $TotalCountofFiledFiles. Details  are  " 
 $AllFailedFilesDetail=$AllFailedFiles|select -ExpandProperty  JobFailedFiles
-$AllFailedFilesDetail
+
+$path="$LogFolderPath"+"robocopyAllFailedCopiedFilesDetail.txt"
+$AllFailedFilesDetail >$path
+
+$path="$LogFolderPath"+"GetChildItemErrorCollection.txt"
+$AllFailedFilesDetail >$path
+
+
+"==========================================================="
+"AllFailedCopiedFilesDetail  are:"
+$AllFailedFilesDetail 
+"==========================================================="
+"GetChildItemErrorCollection  are:"
+$global:GetChildItemErrorCollection
