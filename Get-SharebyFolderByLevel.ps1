@@ -10,7 +10,7 @@ copy the file by level , level 1 then  level 2 ...
 2019/05/21  issue:Server BSOD 
 limit the total current session for robocopy instanse when CPU/Memory/DIsk/Network useage is high
 1)do not keep all the log to memory , remove -k parameter for receive job 
-2)after copy finish , read the log from the log file instead of reading the global:result variable.-working in process
+2)after copy finish , read the log from the log file instead of reading the global:result variable.-finished on 5/28
 Bug: will failed by geting the folder as not permission ,try to catch this and save it to both windows log and log file
 3)limit the robocpopy concurrence to 2 instance to avoid system resource busy,test will be on 5/22，can update by $global:ConcurrenceJobs
 
@@ -19,8 +19,30 @@ Error haddlding, for null in get-childitem on folder level and ..
 
 2019/05/23 Issue:Server BSOD didn't happen again on last try by limit the ConcurrenceJobs to 200 as well as didn't take anylyze the robolog from memmroy
 add the /logfile parameter when start the robocopy instead of writeing the log from $results.joboutput.
-check the jog which state is faied on function Monitor-job， even all the cmd command should show complete where there is error in the joboutput.-need find a way to figure this out.
+check the jog which state is faied on function Monitor-job， even all the cmd command should show complete where there is error in the joboutput.- receive the job for details finished on 5/28
 Covert-RobocopyLogObjFromJob  need to update if the job.out is not robocopy log, such as somekind of error which can not sent to anylyze-job.
+
+2019/05/28 
+Issue 1
+if the folder level is less than global:maxlevel ,what will happen to get-sharefolderbylevel and copy-share.
+ex if maslevel is set to 4 , the folder only has 3 level , so it will be add the foldname and level 3 in the get-sharefolderbylevel
+for copy-share, it will use /lev:2 which will incloud the folder it self and the file in that folder
+so,don't need to modify the script
+
+Issue 2
+robocopyinstance id will not log into the mapping.csv -fixed
+
+Issue 3
+the anylyze-job will failed or stuck sometimes.
+solution: remove Joboutput property from $result instead of reading the log from log file
+
+Issue 4 
+failed item will not able to find from the function find-failedfile ,will fix for next test.
+
+new Feature:
+1 ask user to increase the maxLevel if $global:ShareFlodercollection is less than 50.
+2 rewrite the rocopy log source , reading it from the logfile instead of memory 
+            
 #>
 $global:ShareFlodercollection=@()
 $global:MaxLevel=2
@@ -29,11 +51,14 @@ $global:alljobs=@()
 $global:GetChildItemErrorCollection=@()
 $global:FailedJobsCollection=@()
 $global:ConcurrenceJobs=200
-$path="H:\" 
-$root="H:"
+$path="M:\Test_restore_latest\" 
+$root="M:\Test_restore_latest"
 $global:base="\\10.73.109.70\robotest"
 $global:basefolder=$global:base+$path.Substring($root.Length)
-$golbal:robocopyinstanceID=0
+$global:robocopyinstanceID=0
+$global:Job_SourceFiles_Mappings=@()
+$global:AllFailedFiles=@()
+$global:UnableFindLogJobs=@()
 $starttime=Get-Date
 $LogFolderName=$starttime.tostring("yyyy_MM_dd_HH_mm_ss")
 $global:LogFolderPath="c:\temp\P23\"+$LogFolderName+"\"
@@ -78,7 +103,7 @@ $currentlevel
                         {
                         
                         "subfolder is {0}" -f $obj.FullName
-                        "current lever is {0} " -f $currentlevel
+                        "current level is {0} " -f $currentlevel
                         
                         Get-SharebyFolderByLevel -path ($obj.fullname) -currentlevel $CurrentLevel
                         
@@ -136,18 +161,22 @@ $jobnotcompleted=$true
             Start-Sleep -Seconds 10
             Monitor-Jobs -alljobs $global:alljobs
             }
-            elseif(job.state -eq 'Failed')
+            elseif($job.state -eq 'Failed')
             {
-                if($job.id -in $global:FailedJobsCollection.Jobid){
-                    #do nothing as job alread in the collection.
+                if($job.id -in  $global:FailedJobsCollection.id){
+                    #do nothing as job alread in the collection,and receive-job for error detail.
+                    
                 }
                 else{
+                    #and receive-job for error detail.
+                    $JobErrorDetail=receive-job $job.id
+                    $job|Add-Member -NotePropertyName "JobErrorDetail" -NotePropertyValue $JobErrorDetail
                     $global:FailedJobsCollection+=$job
                 }
                 
             }
             else {
-                "do nothing as job is successful"
+                #"do nothing as job is successful"
             }
 
 
@@ -196,12 +225,13 @@ function copy-share
     $dest=$global:base+$share.FullName.Substring($pathrootlength,$share.FullName.Length-$pathrootlength)
     "source is {0} and dest is {1}" -f ($source,$dest)
     $level="/lev:2"
-    $Logfile="/Log:$global:LogFolderPath"+$golbal:robocopyinstanceID+".txt"
+    $Logfile="/Log:$global:LogFolderPath"+$global:robocopyinstanceID+".txt"
         if ($lev -lt $global:MaxLevel)
         {
         "coyp floder robocopy {0} {1} /R:1 /W:1  /ZB /TEE /lev:2 /Log:File" -f ($source,$dest,$level)
         #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  $args[2]} -ArgumentList ($source,$dest,$level)  # -AsJob 
         $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /TEE /CopyALL  $args[2] $args[3]} -ArgumentList ($source,$dest,$level,$Logfile)
+        $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $global:robocopyinstanceID
         $global:alljobs+=$job
         #as job will fail ,due to AmbiguousParameterSet
         # contorl the total count of robocopy process 
@@ -212,7 +242,7 @@ function copy-share
         "coyp floder robocopy {0} {1} /R:1 /W:1 /MT:32 /ZB /TEE /CopyALL  /S /E  /Log:File" -f ($source,$dest)
         #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  /S /E} -ArgumentList ($source,$dest,$level)  # -AsJob 
         $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1 /MT:32 /ZB /TEE /CopyALL  /S /E $args[3]} -ArgumentList ($source,$dest,$level,$Logfile)
-        $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $golbal:robocopyinstanceID
+        $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $global:robocopyinstanceID
         $global:alljobs+=$job
         #as job will fail ,due to AmbiguousParameterSet
         # contorl the total count of robocopy process
@@ -235,14 +265,14 @@ function copy-share
     "coyp file robocopy {0} {1} {2}  /R:1 /W:1 /MIR  /ZB  {3}" -f  ($source,$dest,$filename,$level)
     #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1   /ZB   $args[3]  } -ArgumentList ($source,$dest,$filename,$level)   #-asjob 
     $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1 /MT:32  /ZB /CopyALL   $args[3]  } -ArgumentList ($source,$dest,$filename,$level) 
-    $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $golbal:robocopyinstanceID
+    $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $global:robocopyinstanceID
     $global:alljobs+=$job
     }
     else
     {
     #do nothing
     }
-    $golbal:robocopyinstanceID++
+    $global:robocopyinstanceID++
 }
 function  Covert-RobocopyLogObjFromJob{
     param (
@@ -482,8 +512,142 @@ function Find-FailedFile {
    return $FailFiles
 }
 
+function Anylyze-RobocopySummay
+{
+    param (
+        [Parameter(Mandatory=$true,position=0)]
+        $RoboCopyJob
+        
+    )
+    $LogPath="$global:LogFolderPath"+"$($RoboCopyJob.robocopyinstanceID)"+".txt"
+    if (Test-path $LogPath )
+    {
+        $RobocopyLogFile=get-content -Path $LogPath
+        $RoboCopyJob|Add-Member -NotePropertyName Joboutput -NotePropertyValue $RobocopyLogFile 
+        $RoboCopyJob|Add-Member -NotePropertyName LogReachable -NotePropertyValue $True
+        $RoboCopyInstance=Covert-RobocopyLogObjFromJob -RoboCopyJob $RoboCopyJob
+    #write down the log in to file before anylyze
+
+    $AnylyzeRobocopyObj=Analyze-RobocoyLog -robocopyinstance $RoboCopyInstance
+        if(  $AnylyzeRobocopyObj[6].SubTotalCatagoryDetailFailed -ne 0 )
+        {
+            $AnylyzeRobocopySummay=[PSCustomObject]@{
+            SourceFolder=$AnylyzeRobocopyObj[1].SubTotalCatagoryDetailTotal
+            CopyStartTime=$AnylyzeRobocopyObj[0].SubTotalCatagoryDetailTotal
+            SourceFile=$AnylyzeRobocopyObj[3].SubTotalCatagoryDetailTotal
+            CopyEndTime=$AnylyzeRobocopyObj[9].SubTotalCatagoryDetailTotal
+            CopyStatus="Failed"
+            jobid=$robocopyjob.jobid
+            }
+            write-host -ForegroundColor red "robocopy ： Failed Detail is ”
+            $AnylyzeRobocopySummay|Ft
+
+            #find failed filse fuction,need testing. 
+            $JobFailedFiles=Find-FailedFile -robocopyinstance $RoboCopyInstance 
+            write-host -ForegroundColor red "robocopy ： Failed Files is ”
+            $JobFailedFiles
+            $FailefileSummary=[pscustomobject]@{
+            AnylyzeRobocopySummay=$AnylyzeRobocopySummay
+            JobFailedFiles=$JobFailedFiles
+            }
+            $global:AllFailedFiles+=$FailefileSummary
+
+        }
+        else 
+        {
+            $AnylyzeRobocopySummay=[PSCustomObject]@{
+            SourceFolder=$AnylyzeRobocopyObj[1].SubTotalCatagoryDetailTotal
+            CopyStartTime=$AnylyzeRobocopyObj[0].SubTotalCatagoryDetailTotal
+            SourceFile=$AnylyzeRobocopyObj[3].SubTotalCatagoryDetailTotal
+            CopyEndTime=$AnylyzeRobocopyObj[9].SubTotalCatagoryDetailTotal
+            CopyStatus="OK"
+            jobid=$robocopyjob.jobid
+            }
+            write-host -ForegroundColor Green "robocopy :  Successed”
+            $AnylyzeRobocopySummay|ft
+        }
+        
+        if($AnylyzeRobocopySummay.SourceFile -eq "*.*")
+        {
+        #$path="$global:LogFolderPath"+"job_"+($robocopyjob.jobid)+".txt"
+            $Job_SourceFiles_Mapping=[pscustomobject]@{
+            jobid=$robocopyjob.jobid
+            SourceFolder=($AnylyzeRobocopySummay.SourceFolder)
+            SourceFiles="allFiles"
+            robocopyinstanceID=$robocopyjob.robocopyinstanceID
+            }
+        
+        }
+        else
+        {
+        #$path="$global:LogFolderPath"+"job_"+($robocopyjob.jobid)+".txt"
+            $Job_SourceFiles_Mapping=[pscustomobject]@{
+            jobid=$robocopyjob.jobid
+            SourceFolder=($AnylyzeRobocopySummay.SourceFolder)
+            SourceFiles=$AnylyzeRobocopySummay.SourceFile
+            robocopyinstanceID=$robocopyjob.robocopyinstanceID
+            }
+
+        }
+        #write the log to logfolder from $robocopyjob.Joboutput cancelled as it was taken by robocopy command.
+        #$robocopyjob.Joboutput >$path
+        $global:Job_SourceFiles_Mappings+=$Job_SourceFiles_Mapping
+    }
+    else {
+        $RoboCopyJob|Add-Member -NotePropertyName LogReachable -NotePropertyValue $False
+        $global:UnableFindLogJobs+=$RoboCopyJob
+    }
+    
+}
+
+
+
 write-host -ForegroundColor Cyan "---Get-SharebyFolderByLevel---"
 Get-SharebyFolderByLevel -path $path
+if ($global:ShareFlodercollection.count -le 50 )
+{   
+    $userinput=$null
+    $regex=('[0-9]{1,2}')
+    $regex2=('[q|Q]')
+    while($true)
+    {
+        if($userinput -eq $null)
+        {
+            $userinput = Read-Host  "current folder level is $global:MaxLevel , swith it to a big number will reduce the copy time. recommendiation is $($global:MaxLevel+1) or Press Q to skip the reseting the folder level" 
+        }
+        else {
+            if($userinput -match $regex2)
+            {
+                write-host "current folder level is still  $global:MaxLevel"
+                break 
+            }
+            elseif ($userinput -match $regex)
+            {
+                if($userinput -le $global:MaxLevel ){
+                    $userinput = Read-Host  "the new folder level is $userinput smaller than current folder level is $global:MaxLevel , swith it to a big number will reduce the copy time. recommendiation is $($global:MaxLevel+1)"
+                }
+                else {
+                    $global:MaxLevel=$userinput
+                    write-host "current folder level changed to  $global:MaxLevel"
+                    #Reset the $global:ShareFlodercollection by increased  the MaxLevel
+                    $global:ShareFlodercollection=@()
+                    Get-SharebyFolderByLevel -path $path
+                    break                   
+                }
+            }
+            else {
+                $userinput = Read-Host  "input is not valid ,please input the number between 1-99"
+            } 
+        }
+    }
+ 
+}
+else {
+    #do nothing
+}
+
+
+
 #$global:ShareFlodercollection.count
 #$global:ShareFlodercollection|select fullname,folderlevel
 #$basefolder
@@ -513,6 +677,7 @@ for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
                     break
                 }
                 Start-Sleep 90
+                
             }
             copy-share -share $share
             
@@ -535,11 +700,16 @@ foreach ($j in $global:alljobs)
 {
 $result=[PSCustomObject]@{
 Jobid = $j.Id
+robocopyinstanceID=$j.robocopyinstanceID
 #Joboutput=receive-job -Job $j -keep
-Joboutput=receive-job -Job $j
+#Joboutput=receive-job -Job $j
         }
 $results+= $result
+#receive all job to recycle the memroy 
+receive-job -Job $j >$null
 }
+
+
 
 
 
@@ -553,100 +723,29 @@ write-host -ForegroundColor Cyan "---Anylyze Each Job output---"
 #}
 #$results+=$job1
 
-
-$Job_SourceFiles_Mappings=@()
-$AllFailedFiles=@()
 foreach ($RoboCopyJob in $results)
-{
-    $RoboCopyInstance=Covert-RobocopyLogObjFromJob -RoboCopyJob $RoboCopyJob
-    #write down the log in to file before anylyze
-    #wrte down the relation betwen job and source file(s)
-
-
-    $AnylyzeRobocopyObj=Analyze-RobocoyLog -robocopyinstance $RoboCopyInstance
-
-    
-    if(  $AnylyzeRobocopyObj[6].SubTotalCatagoryDetailFailed -ne 0 )
-    {
-        $AnylyzeRobocopySummay=[PSCustomObject]@{
-        SourceFolder=$AnylyzeRobocopyObj[1].SubTotalCatagoryDetailTotal
-        CopyStartTime=$AnylyzeRobocopyObj[0].SubTotalCatagoryDetailTotal
-        SourceFile=$AnylyzeRobocopyObj[3].SubTotalCatagoryDetailTotal
-        CopyEndTime=$AnylyzeRobocopyObj[9].SubTotalCatagoryDetailTotal
-        CopyStatus="Failed"
-        jobid=$robocopyjob.jobid
-        }
-        write-host -ForegroundColor red "robocopy ： Failed Detail is ”
-        $AnylyzeRobocopySummay|Ft
-
-        #find failed filse fuction,need testing. 
-        $JobFailedFiles=Find-FailedFile -robocopyinstance $RoboCopyInstance 
-         write-host -ForegroundColor red "robocopy ： Failed Files is ”
-        $JobFailedFiles
-        $FailefileSummary=[pscustomobject]@{
-        AnylyzeRobocopySummay=$AnylyzeRobocopySummay
-        JobFailedFiles=$JobFailedFiles
-        }
-        $AllFailedFiles+=$FailefileSummary
-
-    }
-    else 
-    {
-        $AnylyzeRobocopySummay=[PSCustomObject]@{
-        SourceFolder=$AnylyzeRobocopyObj[1].SubTotalCatagoryDetailTotal
-        CopyStartTime=$AnylyzeRobocopyObj[0].SubTotalCatagoryDetailTotal
-        SourceFile=$AnylyzeRobocopyObj[3].SubTotalCatagoryDetailTotal
-        CopyEndTime=$AnylyzeRobocopyObj[9].SubTotalCatagoryDetailTotal
-        CopyStatus="OK"
-        jobid=$robocopyjob.jobid
-        }
-        write-host -ForegroundColor Green "robocopy :  Successed”
-        $AnylyzeRobocopySummay|ft
-    }
-    
-    if($AnylyzeRobocopySummay.SourceFile -eq "*.*")
-    {
-    $path="$global:LogFolderPath"+"job_"+($robocopyjob.jobid)+".txt"
-        $Job_SourceFiles_Mapping=[pscustomobject]@{
-        jobid=$robocopyjob.jobid
-        SourceFolder=($AnylyzeRobocopySummay.SourceFolder)
-        SourceFiles="allFiles"
-        robocopyinstanceID=$robocopyjob.robocopyinstanceID
-        }
-    
-    }
-    else
-    {
-    $path="$global:LogFolderPath"+"job_"+($robocopyjob.jobid)+".txt"
-        $Job_SourceFiles_Mapping=[pscustomobject]@{
-        jobid=$robocopyjob.jobid
-        SourceFolder=($AnylyzeRobocopySummay.SourceFolder)
-        SourceFiles=$AnylyzeRobocopySummay.SourceFile
-        robocopyinstanceID=$robocopyjob.robocopyinstanceID
-        }
-
-    }
-    #write the log to logfolder from $robocopyjob.Joboutput cancelled as it was taken by robocopy command.
-    #$robocopyjob.Joboutput >$path
-    $Job_SourceFiles_Mappings+=$Job_SourceFiles_Mapping
-    
+{ 
+    Anylyze-RobocopySummay -RoboCopyJob  $RoboCopyJob 
 }
 
-$Job_SourceFiles_Mappings|export-csv -Path ($global:LogFolderPath+"Job_SourceFiles_Mappings.csv")
+write-host -ForegroundColor Cyan "---Summary---"
+
+#write down the relation betwen job and source file(s)
+$global:Job_SourceFiles_Mappings|export-csv -Path ($global:LogFolderPath+"Job_SourceFiles_Mappings.csv")
 $endtime=Get-Date
 "total runtime(including Anylyze log) is $(($endtime-$starttime).totalseconds) seconds"
 
 $TotalCountofFiledFiles=0
-foreach ($obj in $AllFailedFiles)
+foreach ($obj in $global:AllFailedFiles)
 {
 $JobFailedFilesCount=$obj.jobfailedFiles.filepath.count
 $TotalCountofFiledFiles+=$JobFailedFilesCount
 }
 "All Failed Files count is $TotalCountofFiledFiles. Details  are  " 
-$AllFailedFilesDetail=$AllFailedFiles|select -ExpandProperty  JobFailedFiles
+$global:AllFailedFilesDetail=$global:AllFailedFiles|select -ExpandProperty  JobFailedFiles
 
-$AllFailedFilesDetailLogPath="$global:LogFolderPath"+"robocopyAllFailedCopiedFilesDetail.txt"
-$AllFailedFilesDetail >$AllFailedFilesDetailLogPath
+$global:AllFailedFilesDetailLogPath="$global:LogFolderPath"+"robocopyAllFailedCopiedFilesDetail.txt"
+$global:AllFailedFilesDetail >$global:AllFailedFilesDetailLogPath
 
 $GetChildItemErrorCollectionLogPath="$global:LogFolderPath"+"GetChildItemErrorCollection.txt"
 $global:GetChildItemErrorCollection >$GetChildItemErrorCollectionLogPat
@@ -654,13 +753,18 @@ $global:GetChildItemErrorCollection >$GetChildItemErrorCollectionLogPat
 $FailedJobsCollectionCollectionLogPath="$global:LogFolderPath"+"FailedJobsCollection.txt"
 $global:FailedJobsCollection >$FailedJobsCollectionCollectionLogPath
 
+$UnableFindLogJobsLogPath="$global:LogFolderPath"+"UnableFindLogJobs.txt"
+$global:UnableFindLogJobs >$UnableFindLogJobsLogPath
 
 "==========================================================="
 "AllFailedCopiedFilesDetail  are:"
-$AllFailedFilesDetail 
+$global:AllFailedFilesDetail 
 "==========================================================="
 "GetChildItemErrorCollection  are:"
 $global:GetChildItemErrorCollection
 "==========================================================="
 "FailedJobsCollection  are:"
 $global:FailedJobsCollection
+"==========================================================="
+"UnableFindLogJobs  are:"
+$global:UnableFindLogJobs
