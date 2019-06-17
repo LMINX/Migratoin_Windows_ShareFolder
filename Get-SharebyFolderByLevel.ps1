@@ -51,6 +51,9 @@ new Feature:
 2019/05/29
 Issue 1 anylyze-robocopysummary will rocongnize the robocopy log which is not finished, no summary.-fixed.
 
+2019/06/17
+issue 1 Copy foloder will take it parent path after driver name.ex ,when you copy d:\userdata1\user1 to destation ,the destatiaon will have userdata1 folder even you set the root path is d:\userdatae1-- fixed 
+
 #>
 $global:ShareFlodercollection=@()
 $global:MaxLevel=2
@@ -60,7 +63,7 @@ $global:GetChildItemErrorCollection=@()
 $global:FailedJobsCollection=@()
 $global:ConcurrenceJobs=200
 $path="M:\Test_restore_latest\" 
-$root="M:\Test_restore_latest"
+$global:root="M:\Test_restore_latest"
 $global:base="\\10.73.109.70\robotest"
 $global:basefolder=$global:base+$path.Substring($root.Length)
 $global:robocopyinstanceID=0
@@ -227,7 +230,8 @@ function copy-share
     if ($share.gettype() -eq [System.IO.DirectoryInfo])
     {
     #ex: source is H:\00_Tim Mon\NKE-WIN-GTW-P17_5240P4017\System Monitor Log.blg
-    $pathrootlength=$share.FullName.IndexOf(":")+1
+    #$pathrootlength=$share.FullName.IndexOf(":")+1
+    $pathrootlength=$global:root.Length
     $suffixslashlength=("\").length
     $source=$share.FullName
     $dest=$global:base+$share.FullName.Substring($pathrootlength,$share.FullName.Length-$pathrootlength)
@@ -264,7 +268,8 @@ function copy-share
     elseif (($share.gettype() -eq [System.IO.FileInfo] ) -and ($Lev -eq 1 ))
     {
     #ex: source is H:\00_Tim Mon\NKE-WIN-GTW-P17_5240P4017\System Monitor Log.blg
-    $pathrootlength=$share.FullName.IndexOf(":")+1
+    #$pathrootlength=$share.FullName.IndexOf(":")+1
+    $pathrootlength=$global:root.Length
     $suffixslashlength=("\").length
     $source=$share.FullName.Substring(0,$share.FullName.Length-$share.Name.Length-$suffixslashlength)
     $dest=$global:base+$share.FullName.Substring(2,$share.FullName.Length-$share.Name.Length-$pathrootlength-$suffixslashlength)
