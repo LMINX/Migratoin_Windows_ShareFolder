@@ -58,10 +58,10 @@ issue 1 Copy foloder will take it parent path after driver name.ex ,when you cop
 2019/06/24
 issue 1 powershell will take huge amount of the memroy when runing
 try to relase memroy by clear variable
-        #release the memory usage for $Runningjob
-        Clear-Variable  $Runningjob
+        #release the memory usage for $Runningjob if not null 
+        f $Runningjob
 
-        #release the memory usage for $job
+        #release the memory usage for $job if not null 
         Clear-Variable  $job
 
 Issue 2 check robocopy log  function need to update as sometime it is not easy for  script to find the fail item in 10 lines- -find all junction point. 
@@ -92,7 +92,7 @@ if (!(Test-Path -Path $global:LogFolderPath))
 {
 New-Item -Path "c:\temp\P23\" -Name $LogFolderName -ItemType "directory"
 }
-$saaccount="nike\sa.tni"
+$saaccount="XXX"
 $secpasswd = ConvertTo-SecureString "********" -AsPlainText -Force
 $mycreds = New-Object System.Management.Automation.PSCredential ($saaccount, $secpasswd)
 
@@ -302,7 +302,10 @@ function copy-share
     }
     $global:robocopyinstanceID++
     #release the memory usage for $job
+    if($job -ne $null){
     Clear-Variable  $job
+    }
+    
 }
 function  Covert-RobocopyLogObjFromJob{
     param (
@@ -764,7 +767,9 @@ for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
             
         }
         #release the memory usage for $Runningjob
-        Clear-Variable  $Runningjob
+        if($Runningjob -ne $null)
+        {Clear-Variable  $Runningjob}
+        
 
     }
 
