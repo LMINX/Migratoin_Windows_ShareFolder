@@ -54,6 +54,21 @@ Issue 1 anylyze-robocopysummary will rocongnize the robocopy log which is not fi
 2019/06/17
 issue 1 Copy foloder will take it parent path after driver name.ex ,when you copy d:\userdata1\user1 to destation ,the destatiaon will have userdata1 folder even you set the root path is d:\userdatae1-- fixed 
 
+
+2019/06/24
+issue 1 powershell will take huge amount of the memroy when runing
+try to relase memroy by clear variable
+        #release the memory usage for $Runningjob
+        Clear-Variable  $Runningjob
+
+        #release the memory usage for $job
+        Clear-Variable  $job
+
+Issue 2 check robocopy log  function need to update as sometime it is not easy for  script to find the fail item in 10 lines- -find all junction point. 
+add /np parameter to robocopy "Specifies that the progress of the copying operation (the number of files or directories copied so far) will not be displayed." 
+that could fix issued 2 ,need test
+
+
 #>
 $global:ShareFlodercollection=@()
 $global:MaxLevel=2
@@ -240,9 +255,9 @@ function copy-share
     $Logfile="/Log:$global:LogFolderPath"+$global:robocopyinstanceID+".txt"
         if ($lev -lt $global:MaxLevel)
         {
-        "coyp floder robocopy {0} {1} /R:1 /W:1  /ZB /TEE /lev:2 /Log:File" -f ($source,$dest,$level)
+        "coyp floder robocopy {0} {1} /R:1 /W:1  /ZB /TEE /lev:2 /Log:File /NP" -f ($source,$dest,$level)
         #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  $args[2]} -ArgumentList ($source,$dest,$level)  # -AsJob 
-        $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /TEE /CopyALL  $args[2] $args[3]} -ArgumentList ($source,$dest,$level,$Logfile)
+        $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /TEE /CopyALL /NP  $args[2] $args[3]} -ArgumentList ($source,$dest,$level,$Logfile)
         $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $global:robocopyinstanceID
         $global:alljobs+=$job
         #as job will fail ,due to AmbiguousParameterSet
@@ -251,9 +266,9 @@ function copy-share
         }
         elseif ($lev -eq $global:MaxLevel)
         {
-        "coyp floder robocopy {0} {1} /R:1 /W:1 /MT:32 /ZB /TEE /CopyALL  /S /E  /Log:File" -f ($source,$dest)
+        "coyp floder robocopy {0} {1} /R:1 /W:1 /MT:32 /ZB /TEE /CopyALL  /S /E  /Log:File /NP" -f ($source,$dest)
         #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1  /ZB /CopyALL  /S /E} -ArgumentList ($source,$dest,$level)  # -AsJob 
-        $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1 /MT:32 /ZB /TEE /CopyALL  /S /E $args[3]} -ArgumentList ($source,$dest,$level,$Logfile)
+        $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" /R:1 /W:1 /MT:32 /ZB /TEE /CopyALL  /S /E /NP $args[3]} -ArgumentList ($source,$dest,$level,$Logfile)
         $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $global:robocopyinstanceID
         $global:alljobs+=$job
         #as job will fail ,due to AmbiguousParameterSet
@@ -275,9 +290,9 @@ function copy-share
     $dest=$global:base+$share.FullName.Substring(2,$share.FullName.Length-$share.Name.Length-$pathrootlength-$suffixslashlength)
     $level="/lev:1"
     $filename=$share.Name
-    "coyp file robocopy {0} {1} {2}  /R:1 /W:1 /MIR  /ZB  {3}" -f  ($source,$dest,$filename,$level)
+    "coyp file robocopy {0} {1} {2}  /R:1 /W:1 /MIR  /ZB  /NP {3}" -f  ($source,$dest,$filename,$level)
     #Invoke-Command -ComputerName  NKE-WIN-GTW-P17 -Credential $mycreds -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1   /ZB   $args[3]  } -ArgumentList ($source,$dest,$filename,$level)   #-asjob 
-    $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1 /MT:32  /ZB /CopyALL   $args[3]  } -ArgumentList ($source,$dest,$filename,$level) 
+    $job=start-job -ScriptBlock {robocopy "$($args[0])" "$($args[1])" "$($args[2])" /R:1 /W:1 /MT:32  /ZB /CopyALL /NP $args[3]  } -ArgumentList ($source,$dest,$filename,$level) 
     $job|Add-Member -NotePropertyName "robocopyinstanceID" -NotePropertyValue $global:robocopyinstanceID
     $global:alljobs+=$job
     }
@@ -286,6 +301,8 @@ function copy-share
     #do nothing
     }
     $global:robocopyinstanceID++
+    #release the memory usage for $job
+    Clear-Variable  $job
 }
 function  Covert-RobocopyLogObjFromJob{
     param (
@@ -746,6 +763,8 @@ for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
             copy-share -share $share
             
         }
+        #release the memory usage for $Runningjob
+        Clear-Variable  $Runningjob
 
     }
 
