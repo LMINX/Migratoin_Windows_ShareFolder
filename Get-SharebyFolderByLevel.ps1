@@ -59,10 +59,10 @@ issue 1 Copy foloder will take it parent path after driver name.ex ,when you cop
 issue 1 powershell will take huge amount of the memroy when runing
 try to relase memroy by clear variable
         #release the memory usage for $Runningjob if not null 
-        f $Runningjob
+        Clear-Variable -Name Runningjob
 
         #release the memory usage for $job if not null 
-        Clear-Variable  $job
+        Clear-Variable -Name job
 
 Issue 2 check robocopy log  function need to update as sometime it is not easy for  script to find the fail item in 10 lines- -find all junction point. 
 add /np parameter to robocopy "Specifies that the progress of the copying operation (the number of files or directories copied so far) will not be displayed." 
@@ -303,7 +303,7 @@ function copy-share
     $global:robocopyinstanceID++
     #release the memory usage for $job
     if($job -ne $null){
-    Clear-Variable  $job
+    Clear-Variable -Name job
     }
     
 }
@@ -768,7 +768,7 @@ for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
         }
         #release the memory usage for $Runningjob
         if($Runningjob -ne $null)
-        {Clear-Variable  $Runningjob}
+        {Clear-Variable -Name Runningjob}
         
 
     }
