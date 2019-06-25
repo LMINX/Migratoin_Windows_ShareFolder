@@ -69,6 +69,9 @@ add /np parameter to robocopy "Specifies that the progress of the copying operat
 that could fix issued 2 ,need test
 
 
+2019/06/25 add function Read-UserInput which will have timeout and default for read-host funciton .
+the script will not stop for user's input as the count is small than 50 if you do batch copy job
+
 #>
 $global:ShareFlodercollection=@()
 $global:MaxLevel=2
@@ -681,6 +684,73 @@ function Anylyze-RobocopySummary
     }
 }
     
+
+function Read-UserInput
+{
+    param(
+    [parameter(mandatory=$False)]
+    $timeout=3,
+    [parameter(mandatory=$False)]
+    $WaitMilliseconds=100,
+    [parameter(mandatory=$True)]
+    $message
+    
+    )
+#add-type -AssemblyName System.Windows.Forms
+$defaultValue="Q"
+$int=0
+Write-host -nonewline "$($message):"
+$arrayUserinput=@()
+$count=$timeout*1000/$WaitMilliseconds
+$EnterCountNumber=0
+do{
+             start-sleep -Milliseconds $WaitMilliseconds
+             <#write "int is $int ,count it $count"
+             if($int -ge $count)
+             {
+             #Write-host -NoNewline $default
+             return $default
+             }
+             else #>
+             if($host.ui.RawUi.KeyAvailable)
+             {
+             $userinput = $host.ui.RawUI.ReadKey("NoEcho,IncludeKeyUp")
+             #$userinput.virtualkeycode
+             #13 means  press enter
+                 if($userinput.virtualkeycode -eq '13' )
+                 {
+                     if( $EnterCountNumber -ge 1)
+                     {
+                     #"userinput is $userinput"
+                     $allUserInput=[system.String]::Join("", $arrayUserInput)
+                     #Write-host -NoNewline "$allUserInput"
+                     return $allUserInput
+                     }
+                 $EnterCountNumber++                
+                 }
+                 else
+                 {
+                 $arrayUserInput+=$userinput.character
+                    
+                 }
+             }
+             $int++
+
+}
+while($int -le $count)
+
+if($allUserInput -eq $null)
+{
+Write-host -NoNewline $default
+return $defaultValue
+}
+
+}
+
+
+
+
+
     
 
 
@@ -697,7 +767,8 @@ if ($global:ShareFlodercollection.count -le 50 )
     {
         if($userinput -eq $null)
         {
-            $userinput = Read-Host  "current folder level is $global:MaxLevel , swith it to a big number will reduce the copy time. recommendiation is $($global:MaxLevel+1) or Press Q to skip the reseting the folder level" 
+         
+            $userinput = Read-UserInput -message   "current folder level is $global:MaxLevel , swith it to a big number will reduce the copy time. recommendiation is $($global:MaxLevel+1) or Press Q to skip the reseting the folder level" 
         }
         else {
             if($userinput -match $regex2)
@@ -708,7 +779,7 @@ if ($global:ShareFlodercollection.count -le 50 )
             elseif ($userinput -match $regex)
             {
                 if($userinput -le $global:MaxLevel ){
-                    $userinput = Read-Host  "the new folder level is $userinput smaller than current folder level is $global:MaxLevel , swith it to a big number will reduce the copy time. recommendiation is $($global:MaxLevel+1)"
+                    $userinput = Read-UserInput -message  "the new folder level is $userinput smaller than current folder level is $global:MaxLevel , swith it to a big number will reduce the copy time. recommendiation is $($global:MaxLevel+1)"
                 }
                 else {
                     $global:MaxLevel=$userinput
@@ -720,7 +791,7 @@ if ($global:ShareFlodercollection.count -le 50 )
                 }
             }
             else {
-                $userinput = Read-Host  "input is not valid ,please input the number between 1-99"
+                $userinput = Read-UserInput -message  "input is not valid ,please input the number between 1-99"
             } 
         }
     }
