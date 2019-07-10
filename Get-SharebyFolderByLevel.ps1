@@ -72,6 +72,9 @@ that could fix issued 2 ,need test
 2019/06/25 add function Read-UserInput which will have timeout and default for read-host funciton .
 the script will not stop for user's input as the count is small than 50 if you do batch copy job
 
+2019/07/10  as get-runningjob take a lot of for get hundreds jobs status.
+add the variable $global:BatchJobCount to start the  30 jobs each time which means the script will check the running job after start 30 robocopy instance instead 1 instance.
+
 #>
 $global:ShareFlodercollection=@()
 $global:MaxLevel=2
@@ -83,6 +86,7 @@ $global:ConcurrenceJobs=200
 $path="M:\Test_restore_latest\" 
 $global:root="M:\Test_restore_latest"
 $global:base="\\10.73.109.70\robotest"
+$global:BatchJobCount=30
 $global:basefolder=$global:base+$path.Substring($root.Length)
 $global:robocopyinstanceID=0
 $global:Job_SourceFiles_Mappings=@()
@@ -235,7 +239,7 @@ foreach( $job in $global:alljobs){
     }
                   
 }
-write-host -ForegroundColor green "Concurrenc job count is $($RunningjobCollection.count),Max is $global:ConcurrenceJobs"
+write-host -ForegroundColor green "Concurrenc job count is $($RunningjobCollection.count),Max is $global:ConcurrenceJobs, Batch Job Count is $global:BatchJobCount"
 return $RunningjobCollection
 }
 
@@ -809,44 +813,45 @@ else {
 
 write-host -ForegroundColor Cyan "---CopyFolderByLevel---"
 #robocopy $path $basefolder   /E /S  /create /mir
-
+$Currentitem=1
 for ($Lev=1;$lev -le $global:MaxLevel;$lev++)
 {
-
     foreach ($share in ($global:ShareFlodercollection|where {$_.folderlevel -eq $lev}))
     {
         #limit the concurrence of the robocopy job
-        $Runningjob=Get-Runningjob -alljobs $global:alljobs
-        $Runningjobcount=$Runningjob.count
-        if($Runningjobcount -le $global:ConcurrenceJobs)
+        Write-Host -ForegroundColor yellow "total copy itme is $($global:ShareFlodercollection.count) ,now is copying item $Currentitem"
+        if($Currentitem % ($global:BatchJobCount) -eq 0){
+            $Runningjob=Get-Runningjob -alljobs $global:alljobs
+            $Runningjobcount=$Runningjob.count
+            if($Runningjobcount -le $global:ConcurrenceJobs)
+            {
+                copy-share -share $share
+            }
+            else {
+                while($True){
+                    $Runningjob=Get-Runningjob -alljobs $global:alljobs
+                    $Runningjobcount=$Runningjob.count
+                    if($Runningjobcount -lt $global:ConcurrenceJobs)
+                    {
+                        break
+                    }
+                    Start-Sleep 10
+                    
+                }
+                copy-share -share $share    
+            }
+        }
+        else
         {
             copy-share -share $share
+        }
 
-        }
-        else {
-            while($True){
-                $Runningjob=Get-Runningjob -alljobs $global:alljobs
-                $Runningjobcount=$Runningjob.count
-                if($Runningjobcount -lt $global:ConcurrenceJobs)
-                {
-                    break
-                }
-                Start-Sleep 90
-                
-            }
-            copy-share -share $share
-            
-        }
+        $Currentitem++
         #release the memory usage for $Runningjob
-        if($Runningjob -ne $null)
-        {Clear-Variable -Name Runningjob}
-        
-
+       if($Runningjob -ne $null)
+        {Clear-Variable  Runningjob}
     }
-
-
 }
-
 
 write-host -ForegroundColor Cyan "---Monitor the Job once all Robocopy is not running--"
 Monitor-Jobs -alljobs $global:alljobs
