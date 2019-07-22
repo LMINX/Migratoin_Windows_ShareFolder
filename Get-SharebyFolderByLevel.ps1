@@ -75,6 +75,8 @@ the script will not stop for user's input as the count is small than 50 if you d
 2019/07/10  as get-runningjob take a lot of for get hundreds jobs status.
 add the variable $global:BatchJobCount to start the  30 jobs each time which means the script will check the running job after start 30 robocopy instance instead 1 instance.
 
+2019/07/20 fixed the issue for find-failitem.  to list all the error from the log.
+
 #>
 $global:ShareFlodercollection=@()
 $global:MaxLevel=2
@@ -323,7 +325,7 @@ function  Covert-RobocopyLogObjFromJob{
 $SplitLines=$SplitLines="^(-)+$"
 $int=0
 $SplitLinesLineNumber=@()
-$RoboCopyJob.Joboutput.length
+#$RoboCopyJob.Joboutput.length
 foreach($line in $RoboCopyJob.Joboutput)
 {
 if ($line -match $SplitLines)
@@ -342,7 +344,7 @@ $RobocopyDetailEnd=$SplitLinesLineNumber[3]-1
 #if the robocopylog is not finished ,such as interrupt by usesr, skip to add Robocopy Summary
     if ($SplitLinesLineNumber.count -ge 4){
         $RobocopySummaryStart=$SplitLinesLineNumber[3]+1
-        $RobocopySummaryEnd=$RoboCopyJob.Joboutput.count-2
+        $RobocopySummaryEnd=$RoboCopyJob.Joboutput.count-1
         $robocopyinstance=[PSCustomObject]@{
             Title=$RoboCopyJob.Joboutput[$TitleStart..$TitleEnd]
             RobocopyCommand=$RoboCopyJob.Joboutput[$RobocopyCommandStart..$RobocopyCommandEnd]
@@ -377,19 +379,40 @@ function Analyze-RobocoyLog {
     $robocopycommandLength=$robocopyinstance.robocopycommand.count
     foreach ($robocopycommandline in $robocopyinstance.robocopycommand)
     {
-    if(($start -in (0,4,6) ) -or ($start -eq $robocopycommandLength-1))
+    if(($start -in (0,2,5,7) ) -or ($start -eq $robocopycommandLength-1))
         {
             #this is the title for summary
+            #($start -in (0,4,6) ) is for robocopy 2012
         }
     else
         {
+        #write-host -ForegroundColor green  "log is $robocopycommandline and line is $start"    
         $FirstColonIndex=$robocopycommandline.indexof(":")
         $SubTotalCatagory=($robocopycommandline.substring(0,$FirstColonIndex-1)).trim()
         $SubTotalCatagoryDetail=($robocopycommandline.substring($FirstColonIndex+1)).trimstart()
             if( $SubTotalCatagory -like "Started")
             {
-             $SubTotalCatagory=$SubTotalCatagory
-            $SubTotalCatagoryDetail=[datetime]$SubTotalCatagoryDetail
+               
+                $SubTotalCatagory=$SubTotalCatagory
+                try{
+                    $SubTotalCatagoryDetail=[datetime]$SubTotalCatagoryDetail 
+                }
+                catch{
+                    #in Chinese OS , the date format is weekday month day which can not covert to datetime  which format should be weekday  day month
+                    $ArraySubTotalCatagoryDetail=$SubTotalCatagoryDetail.split(" +")
+                    $temp=$ArraySubTotalCatagoryDetail[1]
+                    $ArraySubTotalCatagoryDetail[1]=$ArraySubTotalCatagoryDetail[2]
+                    $ArraySubTotalCatagoryDetail[2]=$temp
+                    $temp=$null
+                    $temp=$ArraySubTotalCatagoryDetail[3]
+                    $ArraySubTotalCatagoryDetail[3]=$ArraySubTotalCatagoryDetail[4]
+                    $ArraySubTotalCatagoryDetail[4]=$temp
+                    $NewArraySubTotalCatagoryDetail=$ArraySubTotalCatagoryDetail[1..($ArraySubTotalCatagoryDetail.length-1)]
+                    $SubTotalCatagoryDetail=$ArraySubTotalCatagoryDetail -join " "
+                    $SubTotalCatagoryDetail=[datetime]$SubTotalCatagoryDetail 
+                    
+                }
+
             }
 
         $RoboCopyCommandByCategory=[PSCustomObject]@{
@@ -398,13 +421,12 @@ function Analyze-RobocoyLog {
                 }
         $AnylyzeRobocopyObj+= $RoboCopyCommandByCategory
         }
-
+                        
     $start++
     }
     
 
     $int=0
-
     foreach ($line in $robocopyinstance.RobocopySummary)
     {
         if($robocopyinstance.RobocopySummary -eq "robocopy log is not completete ,miss the summary part")
@@ -428,6 +450,7 @@ function Analyze-RobocoyLog {
             }           
             else
             {   
+                #write-host "summary line is $line"  
                 $FirstColonIndex=$line.indexof(":")
                 #SubTotal=$line.substring(0,$FirstColonIndex-1)
                 $SubTotalCatagory=($line.substring(0,$FirstColonIndex-1)).trim()
@@ -435,9 +458,27 @@ function Analyze-RobocoyLog {
                 if( $SubTotalCatagory -like "Ended")
                 {
                     $SubTotalCatagoryDetail=($line.substring($FirstColonIndex+1)).trimstart()
+                    try{
+                        $SubTotalCatagoryDetail=[datetime]$SubTotalCatagoryDetail 
+                    }
+                    catch{
+                        #in Chinese OS , the date format is weekday month day which can not covert to datetime  which format should be weekday  day month
+                        $ArraySubTotalCatagoryDetail=$SubTotalCatagoryDetail.split(" +")
+                        $temp=$ArraySubTotalCatagoryDetail[1]
+                        $ArraySubTotalCatagoryDetail[1]=$ArraySubTotalCatagoryDetail[2]
+                        $ArraySubTotalCatagoryDetail[2]=$temp
+                        $temp=$null
+                        $temp=$ArraySubTotalCatagoryDetail[3]
+                        $ArraySubTotalCatagoryDetail[3]=$ArraySubTotalCatagoryDetail[4]
+                        $ArraySubTotalCatagoryDetail[4]=$temp
+                        $NewArraySubTotalCatagoryDetail=$ArraySubTotalCatagoryDetail[1..($ArraySubTotalCatagoryDetail.length-1)]
+                        $SubTotalCatagoryDetail=$ArraySubTotalCatagoryDetail -join " "
+                        $SubTotalCatagoryDetail=[datetime]$SubTotalCatagoryDetail 
+                        
+                    }
                     $RoboCopyResultByCategory=[PSCustomObject]@{
                         SubTotalCatagory = $SubTotalCatagory
-                        SubTotalCatagoryDetailTotal=[datetime]$SubTotalCatagoryDetail
+                        SubTotalCatagoryDetailTotal=$SubTotalCatagoryDetail
                     }
                 }
                 elseif ( $SubTotalCatagory -like "Speed")
@@ -516,6 +557,7 @@ function Find-FailedFile {
    {
        if ($line -match 'ERROR: ')
        {
+            write-host "Error line is $line"
             $endline=$i
             if($i -eq 0)
             {$j=$i
@@ -523,11 +565,19 @@ function Find-FailedFile {
             else
             {$j=$i-1
             }
-                for($j;$j -ge ($i-10);$j--)
+
+            #write-host "endline is $i "
+                for($j;($j -ge ($i-10) -and $j -ge 0);$j--)
                 {
-                    if($RobocopyDetail[$j] -match 'New File')
+                    
+                    if(($RobocopyDetail[$j] -match 'ERROR (\d)+ '))
                         {
                         $StartLine=$j
+                        #"start line is $j"
+                        $FailFileEntryLine=$RobocopyDetail[$StartLine..$endline]
+                       # write-host "FailFileEntryLine is $FailFileEntryLine"
+                       # write-host "jjjj is $RobocopyDetail[$j]"
+                       # Read-Host -Prompt "check for jjjj"
                         break
                         }
                     elseif(($StartLine -eq $null) -and ($j -ge ($i-10)))
@@ -543,19 +593,24 @@ function Find-FailedFile {
                 if ($FailFileEntryLine -ne $null)
                 {
                 $FailFileEntryLine=$RobocopyDetail[$StartLine..$endline]
+                $FailFileEntryIndex=0
                     foreach ($line in $FailFileEntryLine)
                     {
                         #2019/05/14 21:58:42 ERROR 31 (0x0000001F) 
                         if ($line -match 'ERROR (\d)+')
-                        {
-            
-                        $FilePathmatches=([regex]'[a-zA-Z]:\\(((?![<>:"/\\|?*]).)+((?<![ .])\\)?)*.*').matches($line)
+                        {        
+                        $FilePathmatches=([regex]'\\(((?![<>:"/\\|?*]).)+((?<![ .])\\)?)*.*').matches($line)
                         $FilePath= $FilePathmatches[0].value
                         #05/15 keep find error reason
                             $FailFileEntry=[PSCustomObject]@{
                             FilePath=$filepath
+                            FileDeail=$line
+                            FileError=$FailFileEntryLine[$FailFileEntryIndex+1]
                             }
+                        
+                            #write-host "fail is $FailFileEntry"
                         }
+                        $FailFileEntryIndex++
                     }
                   }
                   else
@@ -590,15 +645,25 @@ function Anylyze-RobocopySummary
         
     )
     $LogPath="$global:LogFolderPath"+"$($RoboCopyJob.robocopyinstanceID)"+".txt"
+    write-host  "Logpath is  $LogPath"
     if (Test-path $LogPath )
     {
         $RobocopyLogFile=get-content -Path $LogPath
         $RoboCopyJob|Add-Member -NotePropertyName Joboutput -NotePropertyValue $RobocopyLogFile 
-        $RoboCopyJob|Add-Member -NotePropertyName LogReachable -NotePropertyValue $True
+        if($RoboCopyJob.psobject.Properties.match("LogReachable").count)
+        {
+            $RoboCopyJob.LogReachable=$True
+        }
+        else{
+            $RoboCopyJob|Add-Member -NotePropertyName LogReachable -NotePropertyValue $True
+        }
+        
         $RoboCopyInstance=Covert-RobocopyLogObjFromJob -RoboCopyJob $RoboCopyJob
     #write down the log in to file before anylyze
 
     $AnylyzeRobocopyObj=Analyze-RobocoyLog -robocopyinstance $RoboCopyInstance
+    write-host "AnylyzeRobocopyObj is $($AnylyzeRobocopyObj)"
+    $AnylyzeRobocopyObj
     if($AnylyzeRobocopyObj[5].SubTotalCatagory -eq "NA" )
     {
         #robocooy log is not complete ,skip 
@@ -683,7 +748,13 @@ function Anylyze-RobocopySummary
         write-host -ForegroundColor yellow "robocopy ： Failed to Anylyze due to Logfile not available ”
         write-host "$RoboCopyJob is "
         $RoboCopyJob
-        $RoboCopyJob|Add-Member -NotePropertyName LogReachable -NotePropertyValue $False
+        if($RoboCopyJob.psobject.Properties.match("LogReachable").count)
+        {
+            $RoboCopyJob.LogReachable=$False
+        }
+        else{
+            $RoboCopyJob|Add-Member -NotePropertyName LogReachable -NotePropertyValue $False
+        }
         $global:UnableFindLogJobs+=$RoboCopyJob
     }
 }
